@@ -6,6 +6,9 @@ Modified from:
 """
 
 import torch
+import torch.nn.functional as F
+
+_TANGENT_EPS = 1e-8  # Numerical stabiliser for tangent estimation
 
 
 def angle_difference(src, dst):
@@ -194,8 +197,39 @@ def angle(v1: torch.Tensor, v2: torch.Tensor):
     return torch.atan2(cross_prod_norm, dot_prod)
 
 
+def estimate_local_tangent(d: torch.Tensor) -> torch.Tensor:
+    """Estimate local curve tangent via power iteration on the neighbourhood scatter matrix.
+
+    For a trajectory (curve) point cloud the local neighbourhood is elongated along the
+    curve direction.  The dominant eigenvector of the scatter matrix  C = d^T d / K  is
+    a rotation-invariant estimate of that tangent.
+
+    Args:
+        d: Displacement vectors from each centre point to its K neighbours, shape (B, S, K, 3).
+
+    Returns:
+        Tangent unit vectors, shape (B, S, 3).
+    """
+    B, S, K, _ = d.shape
+
+    # Initialise with the mean displacement direction; fall back to first neighbour
+    # if the mean is degenerate (symmetric neighbourhood).
+    v = d.sum(dim=2)  # (B, S, 3)
+    v_norm = torch.norm(v, dim=-1, keepdim=True)
+    v = torch.where(v_norm > _TANGENT_EPS, v / (v_norm + _TANGENT_EPS), d[:, :, 0, :])
+    v = F.normalize(v, dim=-1)  # (B, S, 3)
+
+    # Three power-iteration steps: v <- normalize(C v) where C = (1/K) d^T d
+    for _ in range(3):
+        d_dot_v = (d * v[:, :, None, :]).sum(dim=-1)   # (B, S, K)
+        v = (d * d_dot_v.unsqueeze(-1)).sum(dim=2)      # (B, S, 3)
+        v = F.normalize(v, dim=-1)
+
+    return v  # (B, S, 3)
+
+
 def sample_and_group_multi(npoint: int, radius: float, nsample: int, xyz: torch.Tensor, normals: torch.Tensor,
-                           returnfps: bool = False):
+                           returnfps: bool = False, compute_tpf: bool = False):
     """Sample and group for xyz, dxyz and ppf features
 
     Args:
@@ -206,9 +240,15 @@ def sample_and_group_multi(npoint: int, radius: float, nsample: int, xyz: torch.
         xyz: XYZ coordinates of the points
         normals: Corresponding normals for the points (required for ppf computation)
         returnfps: Whether to return indices of FPS points and their neighborhood
+        compute_tpf (bool): If True, also computes Tangent Point Pair Features (T-PPF)
+            and includes them under the key ``'tpf'`` in the returned dictionary.
+            T-PPF enriches the standard PPF with a locally estimated curve-tangent
+            direction, providing a rotation-invariant trajectory signature useful for
+            partial-to-complete (probe-trajectory → organ surface) registration.
 
     Returns:
-        Dictionary containing the following fields ['xyz', 'dxyz', 'ppf'].
+        Dictionary containing the following fields ['xyz', 'dxyz', 'ppf'] and,
+        when *compute_tpf* is True, also ['tpf'].
         If returnfps is True, also returns: grouped_xyz, fps_idx
     """
 
@@ -238,7 +278,23 @@ def sample_and_group_multi(npoint: int, radius: float, nsample: int, xyz: torch.
     xyz_feat = d  # (B, npoint, n_sample, 3)
     ppf_feat = torch.stack([nr_d, ni_d, nr_ni, d_norm], dim=-1)  # (B, npoint, n_sample, 4)
 
+    out = {'xyz': new_xyz, 'dxyz': xyz_feat, 'ppf': ppf_feat}
+
+    if compute_tpf:
+        # Estimate local curve tangent (rotation-invariant, trajectory-aware)
+        tangent = estimate_local_tangent(d)  # (B, S, 3)
+        t = tangent[:, :, None, :]           # (B, S, 1, 3)  – broadcast over neighbours
+
+        # T-PPF: three angles that characterise how the tangent relates to each
+        # neighbour's position and normal – analogous to the four PPF angles but
+        # anchored to the curve tangent rather than the surface normal.
+        t_d = angle(t, d)                       # tangent vs displacement           (B, S, nsample)
+        t_ni = angle(t, ni)                     # tangent vs neighbour normal        (B, S, nsample)
+        t_nr = angle(t, nr).expand_as(t_d)     # tangent vs centre normal           (B, S, nsample)
+        tpf_feat = torch.stack([t_d, t_ni, t_nr], dim=-1)  # (B, S, nsample, 3)
+        out['tpf'] = tpf_feat
+
     if returnfps:
-        return {'xyz': new_xyz, 'dxyz': xyz_feat, 'ppf': ppf_feat}, grouped_xyz, fps_idx
+        return out, grouped_xyz, fps_idx
     else:
-        return {'xyz': new_xyz, 'dxyz': xyz_feat, 'ppf': ppf_feat}
+        return out

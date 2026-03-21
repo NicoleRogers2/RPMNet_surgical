@@ -8,8 +8,8 @@ import torch.nn.functional as F
 
 from models.pointnet_util import sample_and_group_multi
 
-_raw_features_sizes = {'xyz': 3, 'dxyz': 3, 'ppf': 4}
-_raw_features_order = {'xyz': 0, 'dxyz': 1, 'ppf': 2}
+_raw_features_sizes = {'xyz': 3, 'dxyz': 3, 'ppf': 4, 'tpf': 3}
+_raw_features_order = {'xyz': 0, 'dxyz': 1, 'ppf': 2, 'tpf': 3}
 
 
 class ParameterPredictionNet(nn.Module):
@@ -181,7 +181,9 @@ class FeatExtractionEarlyFusion(nn.Module):
             cluster features (B, N, C)
 
         """
-        features = sample_and_group_multi(-1, self.radius, self.n_sample, xyz, normals)
+        compute_tpf = 'tpf' in self.features
+        features = sample_and_group_multi(-1, self.radius, self.n_sample, xyz, normals,
+                                          compute_tpf=compute_tpf)
         features['xyz'] = features['xyz'][:, :, None, :]
 
         # Gate and concat
