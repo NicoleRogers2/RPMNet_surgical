@@ -125,6 +125,13 @@ def query_ball_point(radius, nsample, xyz, new_xyz, itself_indices=None):
 
     group_idx[sqrdists > radius ** 2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
+    # When N < nsample the slice above yields fewer than nsample columns.
+    # Pad with the first column (may still be a sentinel; corrected below by the
+    # mask-assignment which replaces all sentinel values with group_first).
+    if group_idx.shape[2] < nsample:
+        pad_size = nsample - group_idx.shape[2]
+        group_idx = torch.cat(
+            [group_idx, group_idx[:, :, :1].expand(-1, -1, pad_size)], dim=2)
     if itself_indices is not None:
         group_first = itself_indices[:, :, None].repeat([1, 1, nsample])
     else:

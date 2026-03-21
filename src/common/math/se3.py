@@ -81,7 +81,7 @@ def from_xyzquat(xyzquat):
     """
     rot = Rotation.from_quat(xyzquat[3:])
     trans = rot.apply(-xyzquat[:3])
-    transform = np.concatenate([rot.as_dcm(), trans[:, None]], axis=1)
+    transform = np.concatenate([rot.as_matrix(), trans[:, None]], axis=1)
     transform = np.concatenate([transform, [[0.0, 0.0, 0.0, 1.0]]], axis=0)
 
     return transform
