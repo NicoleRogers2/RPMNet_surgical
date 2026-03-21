@@ -13,11 +13,42 @@ import torchvision
 
 import data_loader.transforms as Transforms
 import common.math.se3 as se3
+from data_loader.surgical_registration_dataset import SurgicalRegistrationData
 
 _logger = logging.getLogger()
 
 
 def get_train_datasets(args: argparse.Namespace):
+    if args.dataset_type == 'surgical':
+        train_data = SurgicalRegistrationData(
+            data_root=args.dataset_path,
+            partition='train',
+            template_points=args.template_points,
+            source_points=args.source_points,
+            angle_range=args.angle_range,
+            translation_range=args.translation_range,
+            noise_sigma=args.noise_sigma,
+            coverage_ratio=args.coverage_ratio,
+        )
+        val_data = SurgicalRegistrationData(
+            data_root=args.dataset_path,
+            partition='test',
+            template_points=args.template_points,
+            source_points=args.source_points,
+            angle_range=args.angle_range,
+            translation_range=args.translation_range,
+            noise_sigma=args.noise_sigma,
+            coverage_ratio=args.coverage_ratio,
+        )
+        _logger.info(
+            'Surgical dataset: train=%d  val=%d  '
+            'template_pts=%d  source_pts=%d  angle_range=%g  trans_range=%g',
+            len(train_data), len(val_data),
+            args.template_points, args.source_points,
+            args.angle_range, args.translation_range,
+        )
+        return train_data, val_data
+
     train_categories, val_categories = None, None
     if args.train_categoryfile:
         train_categories = [line.rstrip('\n') for line in open(args.train_categoryfile)]
@@ -45,6 +76,26 @@ def get_train_datasets(args: argparse.Namespace):
 
 
 def get_test_datasets(args: argparse.Namespace):
+    if args.dataset_type == 'surgical':
+        test_data = SurgicalRegistrationData(
+            data_root=args.dataset_path,
+            partition='test',
+            template_points=args.template_points,
+            source_points=args.source_points,
+            angle_range=args.angle_range,
+            translation_range=args.translation_range,
+            noise_sigma=args.noise_sigma,
+            coverage_ratio=args.coverage_ratio,
+        )
+        _logger.info(
+            'Surgical test dataset: %d samples  '
+            'template_pts=%d  source_pts=%d  angle_range=%g  trans_range=%g',
+            len(test_data),
+            args.template_points, args.source_points,
+            args.angle_range, args.translation_range,
+        )
+        return test_data
+
     test_categories = None
     if args.test_category_file:
         test_categories = [line.rstrip('\n') for line in open(args.test_category_file)]
