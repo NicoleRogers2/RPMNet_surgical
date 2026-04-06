@@ -157,7 +157,7 @@ def inference(data_loader, model: torch.nn.Module):
             pred_transforms, endpoints = model(val_data, _args.num_reg_iter)
             total_time += time.time() - time_before
 
-            if _args.method == 'rpmnet':
+            if _args.method in ('rpmnet', 'rpmnet_surgical'):
                 all_betas.append(endpoints['beta'])
                 all_alphas.append(endpoints['alpha'])
 
@@ -269,7 +269,7 @@ def save_eval_data(pred_transforms, endpoints, metrics, summary_metrics, save_pa
 
 def get_model():
     _logger.info('Computing transforms using {}'.format(_args.method))
-    if _args.method == 'rpmnet':
+    if _args.method in ('rpmnet', 'rpmnet_surgical'):
         assert _args.resume is not None
         model = models.rpmnet.get_model(_args)
         model.to(_device)
@@ -307,7 +307,7 @@ if __name__ == '__main__':
     _args = parser.parse_args()
     _logger, _log_path = prepare_logger(_args, log_path=_args.eval_save_path)
     os.environ['CUDA_VISIBLE_DEVICES'] = str(_args.gpu)
-    if _args.gpu >= 0 and (_args.method == 'rpm' or _args.method == 'rpmnet'):
+    if _args.gpu >= 0 and _args.method in ('rpmnet', 'rpmnet_surgical'):
         os.environ['CUDA_VISIBLE_DEVICES'] = str(_args.gpu)
         _device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
     else:

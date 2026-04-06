@@ -18,8 +18,9 @@ def rpmnet_arguments():
                         type=str, metavar='PATH',
                         help='path to the processed dataset. Default: ../datasets/modelnet40_ply_hdf5_2048')
     parser.add_argument('--dataset_type', default='modelnet_hdf',
-                        choices=['modelnet_hdf', 'bunny', 'armadillo', 'buddha', 'dragon'],
-                        metavar='DATASET', help='dataset type (default: modelnet_hdf)')
+                        choices=['modelnet_hdf', 'surgical', 'bunny', 'armadillo', 'buddha', 'dragon'],
+                        metavar='DATASET', help='dataset type (default: modelnet_hdf). '
+                                                'Use \'surgical\' for the probe-trajectory P2C dataset.')
     parser.add_argument('--num_points', default=1024, type=int,
                         metavar='N', help='points in point-cloud (default: 1024)')
     parser.add_argument('--noise_type', default='crop', choices=['clean', 'jitter', 'crop'],
@@ -30,16 +31,34 @@ def rpmnet_arguments():
                         metavar='T', help='Maximum magnitude of translation perturbation')
     parser.add_argument('--partial', default=[0.7, 0.7], nargs='+', type=float,
                         help='Approximate proportion of points to keep for partial overlap (Set to 1.0 to disable)')
+    # Surgical dataset parameters (used when --dataset_type surgical) --------
+    parser.add_argument('--template_points', type=int, default=2048,
+                        help='(surgical) Number of template (reference) points to sample. Default: 2048')
+    parser.add_argument('--source_points', type=int, default=1024,
+                        help='(surgical) Number of probe-trajectory (source) points. Default: 1024')
+    parser.add_argument('--angle_range', type=float, default=180.0,
+                        help='(surgical) Max rotation angle in degrees for the rigid perturbation. Default: 180')
+    parser.add_argument('--translation_range', type=float, default=2.0,
+                        help='(surgical) Max translation magnitude per axis. Default: 2.0')
+    parser.add_argument('--noise_sigma', type=float, default=0.005,
+                        help='(surgical) Std-dev of Gaussian probe measurement noise. Default: 0.005')
+    parser.add_argument('--coverage_ratio', type=float, default=0.90,
+                        help='(surgical) Fraction of the half-surface covered by the probe path. Default: 0.90')
     # Model
-    parser.add_argument('--method', type=str, default='rpmnet', choices=['rpmnet'],
-                        help='Model to use. Note: Only rpmnet is supported for training.'
-                             '\'eye\' denotes identity (no registration), \'gt\' denotes groundtruth transforms')
+    parser.add_argument('--method', type=str, default='rpmnet',
+                        choices=['rpmnet', 'rpmnet_surgical'],
+                        help='Model to use. \'rpmnet\' is the original model; '
+                             '\'rpmnet_surgical\' enables all three P2C innovations '
+                             '(T-PPF, P2C-Sinkhorn, SP-Loss).')
     # PointNet settings
     parser.add_argument('--radius', type=float, default=0.3, help='Neighborhood radius for computing pointnet features')
     parser.add_argument('--num_neighbors', type=int, default=64, metavar='N', help='Max num of neighbors to use')
     # RPMNet settings
-    parser.add_argument('--features', type=str, choices=['ppf', 'dxyz', 'xyz'], default=['ppf', 'dxyz', 'xyz'],
-                        nargs='+', help='Which features to use. Default: all')
+    parser.add_argument('--features', type=str, choices=['ppf', 'dxyz', 'xyz', 'tpf'],
+                        default=['ppf', 'dxyz', 'xyz'],
+                        nargs='+', help='Which features to use. Default: all standard features. '
+                                        '\'tpf\' adds Tangent Point Pair Features (T-PPF) '
+                                        'for trajectory source point clouds.')
     parser.add_argument('--feat_dim', type=int, default=96,
                         help='Feature dimension (to compute distances on). Other numbers will be scaled accordingly')
     parser.add_argument('--no_slack', action='store_true', help='If set, will not have a slack column.')
@@ -50,6 +69,21 @@ def rpmnet_arguments():
     parser.add_argument('--loss_type', type=str, choices=['mse', 'mae'], default='mae',
                         help='Loss to be optimized')
     parser.add_argument('--wt_inliers', type=float, default=1e-2, help='Weight to encourage inliers')
+    # Surgical P2C innovations ---------------------------------------------------
+    parser.add_argument('--src_slack_bias', type=float, default=-2.0,
+                        help='(P2C-Sinkhorn) Log-space bias added to the source dust-bin column '
+                             'before Sinkhorn iterations. Negative values (e.g. -2.0) make source '
+                             'outliers less likely, enforcing the constraint that all probe-trajectory '
+                             'points lie on the organ surface. Only active for rpmnet_surgical.'
+                             ' Default: -2.0.')
+    parser.add_argument('--wt_src_inliers', type=float, default=None,
+                        help='(SP-Loss) Inlier penalty weight for source points. '
+                             'Defaults to --wt_inliers. Set higher than --wt_ref_inliers '
+                             'for partial-to-complete registration.')
+    parser.add_argument('--wt_ref_inliers', type=float, default=None,
+                        help='(SP-Loss) Inlier penalty weight for reference points. '
+                             'Defaults to --wt_inliers. Set lower than --wt_src_inliers '
+                             'for partial-to-complete registration (most organ surface is unvisited).')
     # Training parameters
     parser.add_argument('--train_batch_size', default=8, type=int, metavar='N',
                         help='training mini-batch size (default 8)')

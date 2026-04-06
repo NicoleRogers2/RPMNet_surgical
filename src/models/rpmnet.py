@@ -43,7 +43,8 @@ def match_features(feat_src, feat_ref, metric='l2'):
     return dist_matrix
 
 
-def sinkhorn(log_alpha, n_iters: int = 5, slack: bool = True, eps: float = -1) -> torch.Tensor:
+def sinkhorn(log_alpha, n_iters: int = 5, slack: bool = True, eps: float = -1,
+             src_slack_bias: float = 0.0) -> torch.Tensor:
     """ Run sinkhorn iterations to generate a near doubly stochastic matrix, where each row or column sum to <=1
 
     Args:
@@ -51,6 +52,12 @@ def sinkhorn(log_alpha, n_iters: int = 5, slack: bool = True, eps: float = -1) -
         n_iters (int): Number of normalization iterations
         slack (bool): Whether to include slack row and column
         eps: eps for early termination (Used only for handcrafted RPM). Set to negative to disable.
+        src_slack_bias (float): Additive log-space bias applied to the **source** slack column
+            (last column of the padded matrix) before the Sinkhorn iterations begin.
+            A negative value (e.g. ``-2.0``) discourages source points from being assigned
+            to the dust-bin, enforcing the Partial-to-Complete constraint that every source
+            trajectory point must find a match on the target surface.
+            Has no effect when *slack* is False.
 
     Returns:
         log(perm_matrix): Doubly stochastic matrix (B, J, K)
@@ -67,6 +74,14 @@ def sinkhorn(log_alpha, n_iters: int = 5, slack: bool = True, eps: float = -1) -
         log_alpha_padded = zero_pad(log_alpha[:, None, :, :])
 
         log_alpha_padded = torch.squeeze(log_alpha_padded, dim=1)
+
+        # P2C-Sinkhorn: apply asymmetric bias to the source slack column.
+        # This makes it less likely for source points (rows :-1) to be assigned
+        # to the dust-bin (last column), encoding the physical constraint that
+        # every probe-trajectory point lies on the target organ surface.
+        if src_slack_bias != 0.0:
+            log_alpha_padded = log_alpha_padded.clone()
+            log_alpha_padded[:, :-1, -1] = log_alpha_padded[:, :-1, -1] + src_slack_bias
 
         for i in range(n_iters):
             # Row normalization
@@ -150,6 +165,7 @@ class RPMNet(nn.Module):
 
         self.add_slack = not args.no_slack
         self.num_sk_iter = args.num_sk_iter
+        self.src_slack_bias = 0.0  # Default: symmetric Sinkhorn (original behaviour)
 
     def compute_affinity(self, beta, feat_distance, alpha=0.5):
         """Compute logarithm of Initial match matrix values, i.e. log(m_jk)"""
@@ -191,7 +207,8 @@ class RPMNet(nn.Module):
             affinity = self.compute_affinity(beta, feat_distance, alpha=alpha)
 
             # Compute weighted coordinates
-            log_perm_matrix = sinkhorn(affinity, n_iters=self.num_sk_iter, slack=self.add_slack)
+            log_perm_matrix = sinkhorn(affinity, n_iters=self.num_sk_iter, slack=self.add_slack,
+                                       src_slack_bias=self.src_slack_bias)
             perm_matrix = torch.exp(log_perm_matrix)
             weighted_ref = perm_matrix @ xyz_ref / (torch.sum(perm_matrix, dim=2, keepdim=True) + _EPS)
 
@@ -226,5 +243,43 @@ class RPMNetEarlyFusion(RPMNet):
             radius=args.radius, num_neighbors=args.num_neighbors)
 
 
+class RPMNetSurgical(RPMNetEarlyFusion):
+    """RPMNet variant tailored for surgical Partial-to-Complete (P2C) registration.
+
+    Combines three targeted architectural innovations over the original RPMNet:
+
+    1. **T-PPF – Tangent Point Pair Features** (``--features tpf ...``):
+       The source is a 1-D probe trajectory embedded in 3-D.  For each point the
+       local curve tangent is estimated by power iteration on the neighbourhood
+       scatter matrix, then three rotation-invariant angles are computed between
+       the tangent and the displacement/normal vectors (analogous to PPF but
+       anchored to the trajectory rather than a surface normal).  This enriches
+       the feature space with trajectory-specific geometry that survives large
+       rigid transformations.
+
+    2. **P2C-Sinkhorn – Asymmetric Slack Bias** (``--src_slack_bias``):
+       In P2C registration every source point *must* lie on the target surface.
+       A negative log-space bias ``src_slack_bias`` is added to the source
+       dust-bin column before the Sinkhorn iterations, making it exponentially
+       less likely for source points to be discarded as outliers.  The reference
+       (target) slack column remains unbiased, accommodating the large fraction
+       of unvisited organ surface.
+
+    3. **SP-Loss – Source-Priority Inlier Loss** (``--wt_src_inliers`` /
+       ``--wt_ref_inliers``):
+       The inlier penalty is split into a high-weight source term and a
+       low-weight reference term so that the training signal emphasises the
+       physical constraint that probe points must be matched, while accepting
+       that most organ-surface points are legitimately unmatched.
+    """
+
+    def __init__(self, args: argparse.Namespace):
+        super().__init__(args)
+        # P2C-Sinkhorn: negative bias discourages source outliers (dust-bin assignment)
+        self.src_slack_bias = getattr(args, 'src_slack_bias', -2.0)
+
+
 def get_model(args: argparse.Namespace) -> RPMNet:
+    if getattr(args, 'method', 'rpmnet') == 'rpmnet_surgical':
+        return RPMNetSurgical(args)
     return RPMNetEarlyFusion(args)

@@ -191,9 +191,9 @@ class RandomTransformSE3:
 
         # Generate rotation
         rand_rot = special_ortho_group.rvs(3)
-        axis_angle = Rotation.as_rotvec(Rotation.from_dcm(rand_rot))
+        axis_angle = Rotation.as_rotvec(Rotation.from_matrix(rand_rot))
         axis_angle *= rot_mag / 180.0
-        rand_rot = Rotation.from_rotvec(axis_angle).as_dcm()
+        rand_rot = Rotation.from_rotvec(axis_angle).as_matrix()
 
         # Generate translation
         rand_trans = np.random.uniform(-trans_mag, trans_mag, 3)
@@ -284,7 +284,7 @@ class RandomRotatorZ(RandomTransformSE3):
         """Generate a random SE3 transformation (3, 4) """
 
         rand_rot_deg = np.random.random() * self._rot_mag
-        rand_rot = Rotation.from_euler('z', rand_rot_deg, degrees=True).as_dcm()
+        rand_rot = Rotation.from_euler('z', rand_rot_deg, degrees=True).as_matrix()
         rand_SE3 = np.pad(rand_rot, ((0, 0), (0, 1)), mode='constant').astype(np.float32)
 
         return rand_SE3
@@ -322,8 +322,8 @@ class Dict2DcpList:
         rotation_ba = sample['transform_gt'][:3, :3].copy()
         translation_ba = sample['transform_gt'][:3, 3].copy()
 
-        euler_ab = Rotation.from_dcm(rotation_ab).as_euler('zyx').copy()
-        euler_ba = Rotation.from_dcm(rotation_ba).as_euler('xyz').copy()
+        euler_ab = Rotation.from_matrix(rotation_ab).as_euler('zyx').copy()
+        euler_ba = Rotation.from_matrix(rotation_ba).as_euler('xyz').copy()
 
         return src, target, \
                rotation_ab, translation_ab, rotation_ba, translation_ba, \

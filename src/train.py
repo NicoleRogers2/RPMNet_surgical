@@ -89,9 +89,13 @@ def compute_losses(data: Dict, pred_transforms: List, endpoints: Dict,
         raise NotImplementedError
 
     # Penalize outliers
+    # SP-Loss (Source-Priority Inlier Loss): use separate weights for source vs reference
+    # outliers to encode the P2C constraint that all source (probe) points must be matched.
+    wt_src = _args.wt_src_inliers if _args.wt_src_inliers is not None else _args.wt_inliers
+    wt_ref = _args.wt_ref_inliers if _args.wt_ref_inliers is not None else _args.wt_inliers
     for i in range(num_iter):
-        ref_outliers_strength = (1.0 - torch.sum(endpoints['perm_matrices'][i], dim=1)) * _args.wt_inliers
-        src_outliers_strength = (1.0 - torch.sum(endpoints['perm_matrices'][i], dim=2)) * _args.wt_inliers
+        ref_outliers_strength = (1.0 - torch.sum(endpoints['perm_matrices'][i], dim=1)) * wt_ref
+        src_outliers_strength = (1.0 - torch.sum(endpoints['perm_matrices'][i], dim=2)) * wt_src
         if reduction.lower() == 'mean':
             losses['outlier_{}'.format(i)] = torch.mean(ref_outliers_strength) + torch.mean(src_outliers_strength)
         elif reduction.lower() == 'none':
